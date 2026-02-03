@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>高知市 散歩コース自動生成（距離安定版）</title>
+
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    #controls {
+      padding: 10px;
+      background: #f4f4f4;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    #map { height: calc(100vh - 70px); }
+    button { padding: 6px 14px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <label>
+    距離(km):
+    <input type="number" id="distance" value="5" step="0.5" min="1">
+  </label>
+
+  <label>
+    モード:
+    <select id="mode">
+      <option value="kochiplan">高知らしいおすすめ散歩</option>
+      <option value="random">完全ランダム散歩</option>
+    </select>
+  </label>
+
+  <label>
+    雰囲気:
+    <select id="mood">
+      <option value="quiet">静か</option>
+      <option value="lively">にぎやか</option>
+    </select>
+  </label>
+
+  <button onclick="createRoute()">散歩コース作成</button>
+</div>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+/* ===============================
+   初期設定
+=============================== */
+
+const START = [33.5597, 133.5311]; // 高知城
+const map = L.map("map").setView(START, 14);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "© OpenStreetMap contributors"
+}).addTo(map);
+
+L.marker(START).addTo(map).bindPopup("スタート：高知城");
+
+let routeLayer;
+
+/* ===============================
+   スポット
+=============================== */
+
+const kochiSpots = [
+  { lat: 33.5595, lng: 133.5319, mood: "lively" }, // ひろめ
+  { lat: 33.5618, lng: 133.5245, mood: "quiet" },  // 城西公園
+  { lat: 33.5509, lng: 133.5206, mood: "quiet" },  // 鏡川
+];
+
+/* ===============================
+   メイン
+=============================== */
+
+function createRoute() {
+  const targetKm = Number(document.getElementById("distance").value);
+  const mode = document.getElementById("mode").value;
+
+  if (mode === "kochiplan") {
+    createOutAndBackRoute(targetKm, false);
+  } else {
+    createOutAndBackRoute(targetKm, true);
+  }
+}
+
+/* ===============================
+   往復ルート生成（核心）
+=============================== */
+
+async function createOutAndBackRoute(targetKm, random) {
+  const halfKm = targetKm / 2;
+  let radius = halfKm / 111; // km → 緯度度数
+
+  let result, points;
+
+  for (let i = 0; i < 2; i++) {
+    points = random
+      ? randomOutPoint(radius)
+      : moodBasedOutPoint(radius);
+
+    result = await fetchRoute(points);
+
+    const actualKm = result.distance / 1000;
+    radius *= targetKm / actualKm;
+  }
+
+  drawRoute(result.geometry);
+}
+
+/* ===============================
+   折り返し地点生成
+=============================== */
+
+function randomOutPoint(radius) {
+  const angle = Math.random() * Math.PI * 2;
+  const lat = START[0] + Math.cos(angle) * radius;
+  const lng = START[1] + Math.sin(angle) * radius;
+  return [START, [lat, lng], START];
+}
+
+function moodBasedOutPoint(radius) {
+  const mood = document.getElementById("mood").value;
+  const candidates = kochiSpots.filter(s => s.mood === mood);
+  const spot = candidates[Math.floor(Math.random() * candidates.length)];
+
+  const lat = START[0] + (spot.lat - START[0]) * radius * 3;
+  const lng = START[1] + (spot.lng - START[1]) * radius * 3;
+
+  return [START, [lat, lng], START];
+}
+
+/* ===============================
+   OSRM
+=============================== */
+
+async function fetchRoute(points) {
+  const coords = points.map(p => `${p[1]},${p[0]}`).join(";");
+
+  const url =
+    `https://router.project-osrm.org/route/v1/foot/${coords}` +
+    `?overview=full&geometries=geojson`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.routes[0];
+}
+
+/* ===============================
+   描画
+=============================== */
+
+function drawRoute(geojson) {
+  if (routeLayer) map.removeLayer(routeLayer);
+
+  routeLayer = L.geoJSON(geojson, {
+    style: { color: "#2e7d32", weight: 5 }
+  }).addTo(map);
+
+  map.fitBounds(routeLayer.getBounds());
+}
+</script>
+
+</body>
+</html>
